@@ -46,8 +46,18 @@ fun App() {
         if (showRegister) {
             RegisterScreen(
                 onRegister = { name, email, password ->
-                    errorMessage = "El registro no está implementado aún"
-                    showRegister = false
+                    registerUser(
+                        name,
+                        email,
+                        password,
+                        onSuccess = {
+                            errorMessage = "Registro exitoso. Ahora inicia sesión."
+                            showRegister = false
+                        },
+                        onError = { error ->
+                            errorMessage = error
+                        }
+                    )
                 },
                 onToggle = { showRegister = false },
                 errorMessage = errorMessage
@@ -107,12 +117,50 @@ fun loginUser(email: String, password: String, onSuccess: (String) -> Unit, onEr
             } else {
                 val errorText = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "Error desconocido"
                 withContext(Dispatchers.Main) {
-                    onError("Error al iniciar sesión: $errorText")
+                    onError("Error al iniciar sesión")
                 }
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 onError("Error: ${e.localizedMessage}")
+            }
+        }
+    }
+}
+
+fun registerUser(name: String, email: String, password: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val url = URL("https://api.escuelajs.co/api/v1/users/")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "POST"
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.doOutput = true
+
+            val jsonBody = JSONObject()
+            jsonBody.put("name", name)
+            jsonBody.put("email", email)
+            jsonBody.put("password", password)
+            jsonBody.put("avatar", "https://api.lorem.space/image/face?w=150&h=150")
+
+            val outputWriter = OutputStreamWriter(connection.outputStream)
+            outputWriter.write(jsonBody.toString())
+            outputWriter.flush()
+
+            val responseCode = connection.responseCode
+            if (responseCode in 200..299) {
+                withContext(Dispatchers.Main) {
+                    onSuccess()
+                }
+            } else {
+                val errorText = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "Error desconocido"
+                withContext(Dispatchers.Main) {
+                    onError("Error al registrar")
+                }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onError("Error de red: ${e.localizedMessage}")
             }
         }
     }
@@ -233,7 +281,7 @@ fun RegisterScreen(onRegister: (String, String, String) -> Unit, onToggle: () ->
         }
         errorMessage?.let {
             Spacer(modifier = Modifier.height(8.dp))
-            Text(text = it, color = Color.Red)
+            Text(text = it, color = if (it.contains("exitoso", true)) Color.Green else Color.Red)
         }
     }
 }
