@@ -12,9 +12,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import com.example.tallertercer20.ui.theme.TallerTercer20Theme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,7 +49,7 @@ fun App() {
         if (showRegister) {
             RegisterScreen(
                 onRegister = { name, email, password ->
-                    errorMessage = "Usuario registrado" // Simulación de registro
+                    errorMessage = "Usuario registrado"
                     showRegister = false
                 },
                 onToggle = { showRegister = false },
@@ -49,10 +58,20 @@ fun App() {
         } else {
             LoginScreen(
                 onLogin = { email, password ->
-                    // Simulación de inicio de sesión
-                    isAuthenticated = true
-                    token = "mocked_token" // Token simulado
-                    products = listOf("Producto 1", "Producto 2", "Producto 3")
+                    loginUser(
+                        email = email,
+                        password = password,
+                        onSuccess = { receivedToken ->
+                            token = receivedToken
+                            isAuthenticated = true
+                            fetchProducts(receivedToken) { fetchedProducts ->
+                                products = fetchedProducts
+                            }
+                        },
+                        onError = { error ->
+                            errorMessage = error
+                        }
+                    )
                 },
                 onToggle = { showRegister = true },
                 errorMessage = errorMessage
@@ -60,6 +79,75 @@ fun App() {
         }
     } else {
         ProductListScreen(products)
+    }
+}
+
+fun loginUser(email: String, password: String, onSuccess: (String) -> Unit, onError: (String) -> Unit) {
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val url = URL("https://api.escuelajs.co/api/v1/auth/login")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "POST"
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.doOutput = true
+
+            val jsonBody = JSONObject()
+            jsonBody.put("email", email)
+            jsonBody.put("password", password)
+
+            val outputWriter = OutputStreamWriter(connection.outputStream)
+            outputWriter.write(jsonBody.toString())
+            outputWriter.flush()
+
+            val responseCode = connection.responseCode
+            if (responseCode == 201) {
+                val response = connection.inputStream.bufferedReader().use { it.readText() }
+                val token = JSONObject(response).getString("access_token")
+                withContext(Dispatchers.Main) {
+                    onSuccess(token)
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    onError("Credenciales inválidas o error al iniciar sesión")
+                }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onError("Error: ${e.localizedMessage}")
+            }
+        }
+    }
+}
+
+fun fetchProducts(token: String, onResult: (List<String>) -> Unit) {
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val url = URL("https://api.escuelajs.co/api/v1/products")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.connect()
+
+            val response = connection.inputStream.bufferedReader().use { it.readText() }
+            val jsonArray = JSONArray(response)
+            val productList = mutableListOf<String>()
+
+            for (i in 0 until jsonArray.length()) {
+                val product = jsonArray.getJSONObject(i)
+                val title = product.getString("title")
+                val price = product.getDouble("price")
+                val description = product.getString("description")
+                val category = product.getJSONObject("category").getString("name")
+                productList.add("$title - $price USD\nCategoría: $category\n$description")
+            }
+
+            withContext(Dispatchers.Main) {
+                onResult(productList)
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onResult(listOf("Error al cargar productos: ${e.localizedMessage}"))
+            }
+        }
     }
 }
 
@@ -169,42 +257,9 @@ fun ProductListScreen(products: List<String>) {
 
 @Preview(showBackground = true)
 @Composable
-fun PreviewLoginScreen() {
-    TallerTercer20Theme {
-        LoginScreen(
-            onLogin = { _, _ -> },
-            onToggle = {},
-            errorMessage = null
-        )
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun PreviewRegisterScreen() {
-    TallerTercer20Theme {
-        RegisterScreen(
-            onRegister = { _, _, _ -> },
-            onToggle = {},
-            errorMessage = null
-        )
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun PreviewProductListScreen() {
-    TallerTercer20Theme {
-        ProductListScreen(
-            products = listOf("Camiseta", "Zapatos", "Gorra", "Chaqueta", "Mochila")
-        )
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
 fun PreviewApp() {
     TallerTercer20Theme {
-        App() // OJO: Puede dar errores si hay lógica compleja no soportada en preview
+        App()
     }
 }
+
