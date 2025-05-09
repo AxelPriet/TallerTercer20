@@ -15,10 +15,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.tallertercer20.ui.theme.TallerTercer20Theme
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStreamWriter
@@ -49,7 +46,7 @@ fun App() {
         if (showRegister) {
             RegisterScreen(
                 onRegister = { name, email, password ->
-                    errorMessage = "Usuario registrado"
+                    errorMessage = "El registro no está implementado aún"
                     showRegister = false
                 },
                 onToggle = { showRegister = false },
@@ -59,8 +56,8 @@ fun App() {
             LoginScreen(
                 onLogin = { email, password ->
                     loginUser(
-                        email = email,
-                        password = password,
+                        email,
+                        password,
                         onSuccess = { receivedToken ->
                             token = receivedToken
                             isAuthenticated = true
@@ -100,15 +97,17 @@ fun loginUser(email: String, password: String, onSuccess: (String) -> Unit, onEr
             outputWriter.flush()
 
             val responseCode = connection.responseCode
-            if (responseCode == 201) {
-                val response = connection.inputStream.bufferedReader().use { it.readText() }
-                val token = JSONObject(response).getString("access_token")
+            if (responseCode in 200..299) {
+                val responseText = connection.inputStream.bufferedReader().use { it.readText() }
+                val jsonResponse = JSONObject(responseText)
+                val accessToken = jsonResponse.getString("access_token")
                 withContext(Dispatchers.Main) {
-                    onSuccess(token)
+                    onSuccess(accessToken)
                 }
             } else {
+                val errorText = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "Error desconocido"
                 withContext(Dispatchers.Main) {
-                    onError("Credenciales inválidas o error al iniciar sesión")
+                    onError("Error al iniciar sesión: $errorText")
                 }
             }
         } catch (e: Exception) {
@@ -157,7 +156,9 @@ fun LoginScreen(onLogin: (String, String) -> Unit, onToggle: () -> Unit, errorMe
     var password by remember { mutableStateOf("") }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         verticalArrangement = Arrangement.Center
     ) {
         TextField(
@@ -196,7 +197,9 @@ fun RegisterScreen(onRegister: (String, String, String) -> Unit, onToggle: () ->
     var password by remember { mutableStateOf("") }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         verticalArrangement = Arrangement.Center
     ) {
         TextField(
@@ -237,7 +240,9 @@ fun RegisterScreen(onRegister: (String, String, String) -> Unit, onToggle: () ->
 
 @Composable
 fun ProductListScreen(products: List<String>) {
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    Column(modifier = Modifier
+        .fillMaxSize()
+        .padding(16.dp)) {
         Text("Lista de Productos:", style = MaterialTheme.typography.headlineSmall)
         Spacer(modifier = Modifier.height(8.dp))
         LazyColumn {
@@ -262,4 +267,5 @@ fun PreviewApp() {
         App()
     }
 }
+
 
