@@ -16,11 +16,11 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.tallertercer20.ui.theme.TallerTercer20Theme
 import kotlinx.coroutines.*
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.URL
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.*
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -31,6 +31,49 @@ class MainActivity : ComponentActivity() {
                 App()
             }
         }
+    }
+}
+
+
+data class AuthResponse(val access_token: String)
+data class User(val name: String, val email: String, val password: String, val avatar: String = "https://api.lorem.space/image/face?w=150&h=150")
+data class Product(val id: Int, val title: String, val price: Double, val description: String, val category: Category)
+data class Category(val id: Int, val name: String, val image: String)
+
+
+interface ApiService {
+    @POST("auth/login")
+    suspend fun login(@Body credentials: Map<String, String>): AuthResponse
+
+    @POST("users/")
+    suspend fun register(@Body user: User): AuthResponse
+
+    @GET("products")
+    suspend fun getProducts(@Header("Authorization") token: String): List<Product>
+}
+
+
+object RetrofitClient {
+    private const val BASE_URL = "https://api.escuelajs.co/api/v1/"
+
+    private val loggingInterceptor = HttpLoggingInterceptor().apply {
+        level = HttpLoggingInterceptor.Level.BODY
+    }
+
+    private val client = OkHttpClient.Builder()
+        .addInterceptor(loggingInterceptor)
+        .build()
+
+    private val retrofit by lazy {
+        Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+    }
+
+    val apiService: ApiService by lazy {
+        retrofit.create(ApiService::class.java)
     }
 }
 
@@ -46,18 +89,21 @@ fun App() {
         if (showRegister) {
             RegisterScreen(
                 onRegister = { name, email, password ->
-                    registerUser(
-                        name,
-                        email,
-                        password,
-                        onSuccess = {
-                            errorMessage = "Registro exitoso. Ahora inicia sesión."
-                            showRegister = false
-                        },
-                        onError = { error ->
-                            errorMessage = error
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val response = RetrofitClient.apiService.register(
+                                User(name, email, password)
+                            )
+                            withContext(Dispatchers.Main) {
+                                errorMessage = "Registro exitoso. Ahora inicia sesión."
+                                showRegister = false
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                errorMessage = "Error al registrar: ${e.message}"
+                            }
                         }
-                    )
+                    }
                 },
                 onToggle = { showRegister = false },
                 errorMessage = errorMessage
@@ -65,136 +111,49 @@ fun App() {
         } else {
             LoginScreen(
                 onLogin = { email, password ->
-                    loginUser(
-                        email,
-                        password,
-                        onSuccess = { receivedToken ->
-                            token = receivedToken
-                            isAuthenticated = true
-                            fetchProducts(receivedToken) { fetchedProducts ->
-                                products = fetchedProducts
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val response = RetrofitClient.apiService.login(
+                                mapOf("email" to email, "password" to password)
+                            )
+                            withContext(Dispatchers.Main) {
+                                token = response.access_token
+                                isAuthenticated = true
+
+                              
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    try {
+                                        val productsResponse = RetrofitClient.apiService.getProducts("Bearer ${response.access_token}")
+                                        val productStrings = productsResponse.map { product ->
+                                            "${product.title} - ${product.price} USD\nCategoría: ${product.category.name}\n${product.description}"
+                                        }
+                                        withContext(Dispatchers.Main) {
+                                            products = productStrings
+                                        }
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            products = listOf("Error al cargar productos: ${e.message}")
+                                        }
+                                    }
+                                }
                             }
-                        },
-                        onError = { error ->
-                            errorMessage = error
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                errorMessage = "Error al iniciar sesión: ${e.message}"
+                            }
                         }
-                    )
+                    }
                 },
                 onToggle = { showRegister = true },
                 errorMessage = errorMessage
             )
         }
-    } else {
-        ProductListScreen(products)
     }
-}
-
-fun loginUser(email: String, password: String, onSuccess: (String) -> Unit, onError: (String) -> Unit) {
-    CoroutineScope(Dispatchers.IO).launch {
-        try {
-            val url = URL("https://api.escuelajs.co/api/v1/auth/login")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.doOutput = true
-
-            val jsonBody = JSONObject()
-            jsonBody.put("email", email)
-            jsonBody.put("password", password)
-
-            val outputWriter = OutputStreamWriter(connection.outputStream)
-            outputWriter.write(jsonBody.toString())
-            outputWriter.flush()
-
-            val responseCode = connection.responseCode
-            if (responseCode in 200..299) {
-                val responseText = connection.inputStream.bufferedReader().use { it.readText() }
-                val jsonResponse = JSONObject(responseText)
-                val accessToken = jsonResponse.getString("access_token")
-                withContext(Dispatchers.Main) {
-                    onSuccess(accessToken)
-                }
-            } else {
-                val errorText = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "Error desconocido"
-                withContext(Dispatchers.Main) {
-                    onError("Error al iniciar sesión")
-                }
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                onError("Error: ${e.localizedMessage}")
-            }
-        }
-    }
-}
-
-fun registerUser(name: String, email: String, password: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
-    CoroutineScope(Dispatchers.IO).launch {
-        try {
-            val url = URL("https://api.escuelajs.co/api/v1/users/")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.doOutput = true
-
-            val jsonBody = JSONObject()
-            jsonBody.put("name", name)
-            jsonBody.put("email", email)
-            jsonBody.put("password", password)
-            jsonBody.put("avatar", "https://api.lorem.space/image/face?w=150&h=150")
-
-            val outputWriter = OutputStreamWriter(connection.outputStream)
-            outputWriter.write(jsonBody.toString())
-            outputWriter.flush()
-
-            val responseCode = connection.responseCode
-            if (responseCode in 200..299) {
-                withContext(Dispatchers.Main) {
-                    onSuccess()
-                }
-            } else {
-                val errorText = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "Error desconocido"
-                withContext(Dispatchers.Main) {
-                    onError("Error al registrar")
-                }
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                onError("Error de red: ${e.localizedMessage}")
-            }
-        }
-    }
-}
-
-fun fetchProducts(token: String, onResult: (List<String>) -> Unit) {
-    CoroutineScope(Dispatchers.IO).launch {
-        try {
-            val url = URL("https://api.escuelajs.co/api/v1/products")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.setRequestProperty("Authorization", "Bearer $token")
-            connection.connect()
-
-            val response = connection.inputStream.bufferedReader().use { it.readText() }
-            val jsonArray = JSONArray(response)
-            val productList = mutableListOf<String>()
-
-            for (i in 0 until jsonArray.length()) {
-                val product = jsonArray.getJSONObject(i)
-                val title = product.getString("title")
-                val price = product.getDouble("price")
-                val description = product.getString("description")
-                val category = product.getJSONObject("category").getString("name")
-                productList.add("$title - $price USD\nCategoría: $category\n$description")
-            }
-
-            withContext(Dispatchers.Main) {
-                onResult(productList)
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                onResult(listOf("Error al cargar productos: ${e.localizedMessage}"))
-            }
-        }
+    else {
+        ProductListScreen(
+            products = products,
+            onBack = { isAuthenticated = false }
+        )
     }
 }
 
@@ -287,12 +246,23 @@ fun RegisterScreen(onRegister: (String, String, String) -> Unit, onToggle: () ->
 }
 
 @Composable
-fun ProductListScreen(products: List<String>) {
-    Column(modifier = Modifier
-        .fillMaxSize()
-        .padding(16.dp)) {
+fun ProductListScreen(products: List<String>, onBack: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Button(
+            onClick = onBack,
+            modifier = Modifier.padding(bottom = 16.dp)
+        ) {
+            Text("Regresar al login")
+        }
+
         Text("Lista de Productos:", style = MaterialTheme.typography.headlineSmall)
+
         Spacer(modifier = Modifier.height(8.dp))
+
         LazyColumn {
             items(products) { product ->
                 Card(
@@ -315,5 +285,3 @@ fun PreviewApp() {
         App()
     }
 }
-
-
